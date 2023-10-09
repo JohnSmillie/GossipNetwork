@@ -28,10 +28,11 @@ Thanks:
 
 import java.io.*;
 import java.net.*;
-import java.time.Duration;
 import java.util.*;
 
-class GossipData implements Serializable{ // Must be serializable to send 1 bit after another over the network.
+
+// Must be serializable to send 1 bit after another over the network.
+class GossipData implements Serializable{ 
   int nodeID;
   int nodeLocalDataValue;
   int average;
@@ -41,18 +42,33 @@ class GossipData implements Serializable{ // Must be serializable to send 1 bit 
   int cycles;
   String userString;
   UUID cycleID;
-  boolean isFromConsole;
-  InetAddress IPAddress;
-  int portSentFrom;
+
   // Whatever else you might want to send.
 }
-/********************************************************************************/
+/**********************************************************************************************/
+class LocalData {
+  int nodeID;
+  int nodeLocalDataValue;
+  int average;
+  int highValue;
+  int lowValue;
+  int groupSize;
+  int cycles;
+
+
+
+}
+/**********************************************************************************************/
 // Gossip class called from the CLI with one argument
-//  birth of the individual gossip node.
+// birth of the individual gossip node.
 public class Gossip{
   public static int serverPort;
   public static int nodeID;
-  
+  public int nodeLocalDataValue;
+  public int average;
+  public int highValue;
+  public int lowValue;
+  public int groupSize;
   
   public static void main(String[] args){
     if(args.length > 0){
@@ -65,6 +81,7 @@ public class Gossip{
     ConsoleInputLooper consoleLoop = new ConsoleInputLooper();
     Thread t = new Thread(consoleLoop);
     t.start();
+    // loop to listen for external connections
     try{
       // create a UDP portal
       DatagramSocket UDPSocket = new DatagramSocket(serverPort);
@@ -80,22 +97,13 @@ public class Gossip{
         ObjectInputStream ois = new ObjectInputStream(in);
         try{
           GossipData gd = (GossipData) ois.readObject();
-          if (gd.userString.indexOf("stopserver") > -1){
+          if (gd.userString.equals("stopserver")){
             System.out.println("SERVER: Stopping UDP listener now.\n");
+            UDPSocket.close();
             break;
           }
-          
-          // look to see the message is from 
-          // if it's the our port number, than spawn a client worker
-          // if it's not our port number, spawn a server worker
-          if (gd.isFromConsole){
-            // respond to client (console) commands
-            new ConsoleWorker(gd).start();
-          }
-          else{
-            // respond to outside correspondence
-            new GossipWorker(gd).start();
-          }
+          // respond to outside correspondence
+          new GossipWorker(gd, dp).start();
         }
         catch (ClassNotFoundException cnf){
           cnf.printStackTrace();
@@ -110,22 +118,158 @@ public class Gossip{
     }
   }
 }
+/**********************************************************************************/
+class GossipWorker extends Thread{
+  GossipData gd;
+  DatagramPacket dp;
+  public GossipWorker (GossipData gd, DatagramPacket dp){
+    this.gd = gd; 
+    this.dp = dp;
+  }
+
+  public void run(){
+    System.out.println("Communication from the outside world! It's from node: " + gd.nodeID);
+    System.out.println("Command received: " + gd.userString);
+    switch(gd.userString){
+      // pong response 
+      case "p":
+        try{
+          DatagramSocket dg = new DatagramSocket();
+          InetAddress IPAddress = InetAddress.getByName("localhost");
+          GossipData gd = new GossipData();
+          gd.userString = "Hello from node " + Gossip.nodeID;
+          ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+          ObjectOutputStream oos = new ObjectOutputStream(outputStream);
+          oos.writeObject(gd);
+          byte[] data = outputStream.toByteArray();
+          DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, this.dp.getPort());
+          dg.send(dp);
+          dg.close(); 
+        }
+        catch(UnknownHostException he ){
+          he.printStackTrace();
+        }
+        catch(IOException io){
+          io.printStackTrace();
+        }
+        break;
+      case "m":
+
+    }
+  }
+}
 /**************************************************************************************/
 class ConsoleInputLooper implements Runnable {
   Scanner input = new Scanner(System.in);
   
   public void run(){
-    //BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
-    try{
       String clientCommand;
       System.out.println("Enter t too see a list of functions.");
       while(true){
+        System.out.print(">");
         clientCommand = input.nextLine();
         if(clientCommand.equals("quit")){
           System.out.println("Goodbye");
           System.exit(0);
         }
+        GossipData gd = new GossipData();
+        // pass along the command in serializable data object to be shared with the processes
+        gd.userString = clientCommand;
+        new ConsoleWorker(gd).start();
+      }
+  }
+}
+
+/***********************************************************************************************/
+// The Gossip Data object will have the user command and will be passed along to subsequent processes
+class ConsoleWorker extends Thread{
+  GossipData gd;
+  public ConsoleWorker(GossipData gd){ this.gd = gd;}
+
+  public void run(){
+    System.out.println("Console Worker entered");
+    switch(gd.userString){
+      case "t": 
+        System.out.println("Enter \"p\" to ping upper node and lower node");
+        break;
+      case "p": // this can become ping
+        new Pinger().ping(gd, Gossip.serverPort+1);
+        new Pinger().ping(gd, Gossip.serverPort-1);
+        break;
+        
+       default:
+        System.out.println("Input not recognized"); 
+
+    }
+     System.out.print(">");
+  }
+}
+
+/***********************************************************************************************/
+class Pinger extends Thread {
+  public boolean pingSuccess = false;
+
+  public boolean ping(GossipData gd, int port){
+    if(port < 48100 || port > 48109){
+      return false;
+    }
+    try{
+        DatagramSocket dg = new DatagramSocket();
+        InetAddress IPAddress = InetAddress.getByName("localhost");
+        // set the GossipData obj with the necassary info for a ping call. 
+        gd.nodeID = Gossip.nodeID;
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        ObjectOutputStream oos = new ObjectOutputStream(outputStream);
+        oos.writeObject(gd);
+        byte[] data = outputStream.toByteArray();
+        DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, port);
+        dg.send(dp);
+       
+        // neighbor node has logic to pong
+        // c
+        pingSuccess = listen(dg, gd);
+      }
+      catch(UnknownHostException he ){
+        he.printStackTrace();
+      }
+      catch(IOException io){
+        io.printStackTrace();
+      }
+      System.out.printf("Ping to node %d successful: %b\n", port-48100, pingSuccess);
+      return pingSuccess;
+    }
+
+    // listen for response from the neighbor on the same socket as the outgoing ping
+    public boolean listen(DatagramSocket dg, GossipData gd){
+      try{
+        byte[] data = new byte[2048];
+        DatagramPacket dp = new DatagramPacket(data, data.length);
+        dg.setSoTimeout(1000);
+        dg.receive(dp);
+        byte[] receivedData = dp.getData();
+        ByteArrayInputStream in = new ByteArrayInputStream(receivedData);
+        ObjectInputStream ois = new ObjectInputStream(in);
         try{
+          gd = (GossipData) ois.readObject();
+          return true;
+        }
+        catch (ClassNotFoundException cnf){
+          cnf.printStackTrace();
+        }
+      }
+      catch(SocketTimeoutException ste){
+      }
+      catch (IOException io){}
+      return false;
+   
+    }
+}
+
+
+/*********************************************************************************/
+/* Discussion Posts:  */
+
+/*        OUTBOUND UDP UTILITY CODE
           DatagramSocket dg = new DatagramSocket();
           InetAddress IPAddress = InetAddress.getByName("localhost");
           GossipData gd = new GossipData();
@@ -137,107 +281,4 @@ class ConsoleInputLooper implements Runnable {
           byte[] data = outputStream.toByteArray();
           DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, Gossip.serverPort);
           dg.send(dp);
-          dg.close();
-        }
-        catch(UnknownHostException he ){
-          he.printStackTrace();
-        }
-      }
-    }catch(IOException io){
-      io.printStackTrace();
-    }
-  }
-}
-
-/**********************************************************************************/
-class ConsoleWorker extends Thread{
-  GossipData gd;
-  public ConsoleWorker(GossipData gd){ this.gd = gd;}
-
-  public void run(){
-    switch(gd.userString){
-      case "t": 
-        System.out.println("Press \"u\" to ping your upper neighbor");
-        break;
-      case "u": // this can become ping
-        pingUpperNode();
-        break;
-      case "d":
-        pingLowerNode();
-        break;
-
-    }
-  }
-  public void pingUpperNode(){
-    try{
-        DatagramSocket dg = new DatagramSocket();
-        InetAddress IPAddress = InetAddress.getByName("localhost");
-        GossipData gd = new GossipData();
-        gd.userString = "Hello outside world!!";
-        gd.isFromConsole = false;
-        gd.nodeID = Gossip.nodeID;
-        gd.portSentFrom = Gossip.serverPort;
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        ObjectOutputStream oos = new ObjectOutputStream(outputStream);
-        oos.writeObject(gd);
-        byte[] data = outputStream.toByteArray();
-        DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, Gossip.serverPort+1);
-        dg.send(dp);
-        dg.close();
-      }
-      catch(UnknownHostException he ){
-        he.printStackTrace();
-      }
-      catch(IOException io){
-        io.printStackTrace();
-      }
-  }
-  public void pingLowerNode(){
-    try{
-        DatagramSocket dg = new DatagramSocket();
-        InetAddress IPAddress = InetAddress.getByName("localhost");
-        GossipData gd = new GossipData();
-        gd.userString = "Hello outside world!!";
-        gd.isFromConsole = false;
-        gd.nodeID = Gossip.nodeID;
-        gd.portSentFrom = Gossip.serverPort;
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        ObjectOutputStream oos = new ObjectOutputStream(outputStream);
-        oos.writeObject(gd);
-        byte[] data = outputStream.toByteArray();
-        DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, Gossip.serverPort-1);
-        dg.send(dp);
-        dg.close();
-      }
-      catch(UnknownHostException he ){
-        he.printStackTrace();
-      }
-      catch(IOException io){
-        io.printStackTrace();
-      }
-  }
-}
-class GossipWorker extends Thread{
-  GossipData gd;
-  public GossipWorker (GossipData gd){
-    this.gd = gd; 
-  }
-
-  public void run(){
-    System.out.println("Communication from the outside world!");
-    System.out.println("Sender Node ID: " + gd.nodeID + " port number: " + gd.portSentFrom);
-    System.out.println(gd.userString);
-    System.out.println("Worker is continuing to work...");
-    
-    try{
-      sleep(60000);
-      System.out.println("Gossip Worker is awake.");
-    }
-    catch(Exception e){
-      e.printStackTrace();
-    }
-    // respond back
-  }
-}
-/*********************************************************************************/
-/* Discussion Posts:  */
+          dg.close(); */
