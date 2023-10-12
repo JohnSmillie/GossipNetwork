@@ -78,7 +78,7 @@ public class Gossip {
       DatagramSocket UDPSocket = new DatagramSocket(localData.serverPort);
       //System.out.println("SERVER: Receive Buffer size: " + UDPSocket.getReceiveBufferSize() + "\n");  
       byte[] data = new byte[2048];
-      InetAddress IPAddress = InetAddress.getByName("localhost");
+      //InetAddress IPAddress = InetAddress.getByName("localhost");
       while(true){
         // a DatagramSocket will receive a DatagramPacket as fixed size array of bytes.
         DatagramPacket dp = new DatagramPacket(data, data.length);
@@ -122,8 +122,6 @@ public class Gossip {
     localData.cycles = localData.groupSize = 0;
     localData.N = 20;
     localData.highValueNode = localData.lowValueNode = localData.nodeID;
-    
-     
     System.out.printf("Node %d listening at port %d\n", localData.nodeID, localData.serverPort);
 
     // listening for input from the user console... aka client code
@@ -235,7 +233,7 @@ class ConsoleInputLooper implements Runnable {
 // The Gossip Data object will have the user command and will be passed along to subsequent processes
 class ConsoleWorker extends Thread{
   GossipData gd;
-  public ConsoleWorker(GossipData gd){ this.gd = gd;}
+  public ConsoleWorker(GossipData gd){this.gd = gd;}
 
   public void run(){
     System.out.println("Console Worker entered");
@@ -243,7 +241,7 @@ class ConsoleWorker extends Thread{
       case "t": 
         System.out.println("l - list local values\np - ping upper node and lower node\nm - retreive the current Max/Min\nv - randomize local bucket value\n");
         break;
-      case "p": // this can become ping
+      case "p":   
         System.out.printf("Ping to node %d successful: %b\n", Gossip.localData.nodeID+1, Pinger.ping(gd, Gossip.localData.serverPort+1));
         System.out.printf("Ping to node %d successful: %b\n", Gossip.localData.nodeID-1, Pinger.ping(gd, Gossip.localData.serverPort-1));
         break;
@@ -267,18 +265,15 @@ class ConsoleWorker extends Thread{
       case "m":
         MCycle.initM(gd);
         
-      // messages go outbound from root, and then inbound to root
-        
-        // send the command to upper node if it is running 
-        // cycleCount will be equal to the number of branches
+        // messages go outbound from root, and then inbound to root
+        // cycleCount will be equal to the number of branches / expected responses back
         // Gossip worker will use cycleCount to know when to turn around and go back, or stop
+        // send the command to upper node if it is running 
         gd.userString = "p";
         if(Pinger.ping(gd, Gossip.localData.serverPort+1)){
           gd.userString = "m";
           gd.cycleCount++;
           PublishCommand.publish(gd, Gossip.localData.serverPort+1);
-          // track how many outbounds will expect an inbound
-          
         }
         // send the command to lower node if it is running
         gd.userString = "p";
@@ -286,70 +281,23 @@ class ConsoleWorker extends Thread{
           gd.userString = "m";
           gd.cycleCount++;
           PublishCommand.publish(gd, Gossip.localData.serverPort-1);
-         // track how many outbounds will expect an inbounds
-          
         }
         // no neighbors are present, so print local data and call it a day
         if (gd.cycleCount == 0){
           System.out.printf("Max: %d\nMin: %d\n", Gossip.localData.highValue, Gossip.localData.lowValue);
         }
         break;
-       default:
+      default:
         System.out.println("Input not recognized"); 
 
     }
-     System.out.print("\n>");
-  }
-   
-   
+    System.out.print("\n>");
+  }  
 }
-/***********************************************************************************************/
-class MCycle{
 
-public static void initM(GossipData gd){
- 
-    //reset values as high/low could've changed with randomizer
-    gd.highValue = gd.lowValue = Gossip.localData.localDataValue;
-    gd.highValueNode = gd.lowValueNode = Gossip.localData.nodeID;
-    gd.cycleStarterNode = Gossip.localData.nodeID;
-    gd.cycleCount = 0;
-  }
-
-  public static void compute(GossipData gd){
-    //boolean publishable = false;
-    //if (Gossip.localData.highValue == gd.highValue && Gossip.localData.lowValue == gd.lowValue){
-      //return;
-    //}
-    
-    if(Gossip.localData.highValue > gd.highValue){
-      gd.highValue = Gossip.localData.highValue;
-      gd.highValueNode = Gossip.localData.highValueNode;
-      
-    }
-    else {
-      Gossip.localData.highValue = gd.highValue;
-      Gossip.localData.highValueNode = gd.highValueNode;
-      
-    }
-    if(Gossip.localData.lowValue < gd.lowValue){
-      gd.lowValue = Gossip.localData.lowValue;
-      gd.lowValueNode = Gossip.localData.lowValueNode;
-      
-    }
-    else {
-      Gossip.localData.lowValue = gd.lowValue;
-      Gossip.localData.lowValueNode = gd.lowValueNode;
-      
-    }
-    //gd.userString = "nv";
-   
-
-  }
- 
-}
 /***********************************************************************************************/
 // simple publish class does not need to know if neighbor node is running
-// send off the command to the next node to receive only if it is running
+// send off the command to the next node to receive, only if it is running
 class PublishCommand{
   public static void publish(GossipData gd, int port){
     try{
@@ -368,7 +316,7 @@ class PublishCommand{
   catch(UnknownHostException he ){
         he.printStackTrace();
       }
-      catch(IOException io){
+  catch(IOException io){
         io.printStackTrace();
       }
 }
@@ -392,9 +340,6 @@ class Pinger extends Thread {
         byte[] data = outputStream.toByteArray();
         DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, port);
         dg.send(dp);
-       
-        // neighbor node has logic to pong
-        // c
         pingSuccess = listen(dg, gd);
       }
       catch(UnknownHostException he ){
@@ -431,7 +376,6 @@ class Pinger extends Thread {
       }
       catch (IOException io){}
       return false;
-   
     }
 
     // ping receiever receives the ping and pongs back
@@ -439,7 +383,6 @@ class Pinger extends Thread {
       try{
           DatagramSocket dg = new DatagramSocket();
           InetAddress IPAddress = InetAddress.getByName("localhost");
-          
           ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
           ObjectOutputStream oos = new ObjectOutputStream(outputStream);
           oos.writeObject(gd);
@@ -454,7 +397,38 @@ class Pinger extends Thread {
         catch(IOException io){
           io.printStackTrace();
         }
-      }
+    }
+}
+/***********************************************************************************************/
+class MCycle{
+
+public static void initM(GossipData gd){
+    //reset values as high/low could've changed with randomizer
+    gd.highValue = gd.lowValue = Gossip.localData.localDataValue;
+    gd.highValueNode = gd.lowValueNode = Gossip.localData.nodeID;
+    gd.cycleStarterNode = Gossip.localData.nodeID;
+    gd.cycleCount = 0;
+  }
+
+  public static void compute(GossipData gd){
+    if(Gossip.localData.highValue > gd.highValue){
+      gd.highValue = Gossip.localData.highValue;
+      gd.highValueNode = Gossip.localData.highValueNode;
+    }
+    else {
+      Gossip.localData.highValue = gd.highValue;
+      Gossip.localData.highValueNode = gd.highValueNode;
+    }
+    if(Gossip.localData.lowValue < gd.lowValue){
+      gd.lowValue = Gossip.localData.lowValue;
+      gd.lowValueNode = Gossip.localData.lowValueNode;
+    }
+    else {
+      Gossip.localData.lowValue = gd.lowValue;
+      Gossip.localData.lowValueNode = gd.lowValueNode;
+    }
+  }
+ 
 }
 /***********************************************************************************************/
 // randomizer will reset stored data (max/min, etc.) as they are no longer accurate. 
@@ -470,17 +444,17 @@ class RandomizeValue{
   }
 }
 /***********************************************************************************************/
-
+// "l" and "m" will call these functions once locally, with respect to the input
+// use this opportunity to increase the LOCAL cycle count
 class DisplayLocals {
   public static void displayLocals(){
-    // locally increase the cycle count
     Gossip.localData.cycles++;
     System.out.printf("Locally stored data for node %d\nPublic Port: %d\nInteger Value: %d\nCycles: %d\n", Gossip.localData.nodeID, Gossip.localData.serverPort, Gossip.localData.localDataValue, Gossip.localData.cycles);
   }
   public static void displayMaxMin(){
+    Gossip.localData.cycles++;
     System.out.println("Max value: " + Gossip.localData.highValue + " at node: " + Gossip.localData.highValueNode );
     System.out.println("Min value: " + Gossip.localData.lowValue + " at node: " + Gossip.localData.lowValueNode);
-  
   }
 }
 
