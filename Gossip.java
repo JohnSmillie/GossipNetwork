@@ -201,6 +201,9 @@ class GossipWorker extends Thread{
           PublishCommand.publish(gd, nextNodePort > Gossip.localData.serverPort ? nextNodePort - 2 : nextNodePort +2);
         }
         break;
+      case "y":
+        DisplayLocals.displayCycles();
+        PublishCommand.publish(gd, nextNodePort);
       default:
         System.out.println("Input not recognized"); 
     }
@@ -287,6 +290,10 @@ class ConsoleWorker extends Thread{
           System.out.printf("Max: %d\nMin: %d\n", Gossip.localData.highValue, Gossip.localData.lowValue);
         }
         break;
+      case "y":
+        DisplayLocals.displayCycles();
+        PublishCommand.publish(gd, Gossip.localData.serverPort+1);
+        PublishCommand.publish(gd, Gossip.localData.serverPort-1);
       default:
         System.out.println("Input not recognized"); 
 
@@ -455,6 +462,10 @@ class DisplayLocals {
     Gossip.localData.cycles++;
     System.out.println("Max value: " + Gossip.localData.highValue + " at node: " + Gossip.localData.highValueNode );
     System.out.println("Min value: " + Gossip.localData.lowValue + " at node: " + Gossip.localData.lowValueNode);
+  }
+  public static void displayCycles(){
+    Gossip.localData.cycles++;
+    System.out.printf("Number of cycles for node %d: %d", Gossip.localData.nodeID, Gossip.localData.cycles);
   }
 }
 
