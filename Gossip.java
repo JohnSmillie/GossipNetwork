@@ -34,16 +34,17 @@ import java.util.*;
 // Must be serializable to send 1 bit after another over the network.
 class GossipData implements Serializable{ 
   int nodeID;
-  int average;
   int highValue;
   int highValueNode;
   int lowValue;
   int lowValueNode;
+  double average;
   int groupSize;
   String userString;
   int cycleCount;
   UUID cycleID;
   int cycleStarterNode;
+  boolean pingSuccess;
   
 
   // Whatever else you might want to send.
@@ -52,8 +53,10 @@ class GossipData implements Serializable{
 class LocalData {
   int nodeID;
   int serverPort;
+  int upperNodePort;
+  int lowerNodePort;
   int localDataValue;
-  int average;
+  double average;
   int highValue;
   int highValueNode;
   int lowValue;
@@ -61,7 +64,7 @@ class LocalData {
   int groupSize;
   int cycles;
   int N;
-  //HashMap<UUID, Integer> cycleTracker;
+  HashMap<UUID, Integer> cycleTracker;
 }
 /**********************************************************************************************/
 // Gossip class called from the CLI with one argument
@@ -120,8 +123,10 @@ public class Gossip {
     localData.localDataValue = (int) (Math.random() * 100);
     localData.average = localData.lowValue = localData.highValue = localData.localDataValue;
     localData.cycles = localData.groupSize = 0;
-    localData.N = 20;
+    localData.N = 2;
     localData.highValueNode = localData.lowValueNode = localData.nodeID;
+    localData.upperNodePort = localData.serverPort+1;
+    localData.lowerNodePort = localData.serverPort-1;
     System.out.printf("Node %d listening at port %d\n", localData.nodeID, localData.serverPort);
 
     // listening for input from the user console... aka client code
@@ -144,13 +149,14 @@ class GossipWorker extends Thread{
   public void run(){
     System.out.println("Communication from the outside world! It's from node: " + gd.nodeID);
     System.out.println("Command received: " + gd.userString + "\n");
+    // if sender is lower, next port is upper and vice versa
     int nextNodePort = gd.nodeID > Gossip.localData.nodeID ?  Gossip.localData.serverPort-1 : Gossip.localData.serverPort+1;
     switch(this.gd.userString){
       
       // pong response 
       case "p":
       // this dp has the return address of the pinger
-        Pinger.receive(this.dp, this.gd);
+        Pinger.respond(this.dp, this.gd);
         break;
       case "v":
       // perform local action and forward onward
@@ -168,6 +174,10 @@ class GossipWorker extends Thread{
         DisplayLocals.displayMaxMin();
         PublishCommand.publish(gd, nextNodePort);
         break;
+      case "la":
+        DisplayLocals.displayAverage();
+        PublishCommand.publish(gd, nextNodePort);
+        break;
       case "m":
         MCycle.compute(gd);
         //  handle the cases where the receiver is the sender
@@ -180,18 +190,20 @@ class GossipWorker extends Thread{
           System.out.println("Sender node has received all necessary responses. Disseminate info.");
           gd.cycleCount--;
           // root node will now contain the min and max. time to disseminate the info
-          PublishCommand.publish(gd, Gossip.localData.serverPort+1);
-          PublishCommand.publish(gd, Gossip.localData.serverPort-1);
+          PublishCommand.publish(gd, Gossip.localData.upperNodePort);
+          PublishCommand.publish(gd, Gossip.localData.lowerNodePort);
           gd.userString = "lm";
           try{
-          sleep(250);
+          // pause briefly to allow processes to complete before printing
+          sleep(500);
           }catch (Exception e){}
           new ConsoleWorker(gd).start();
           break;
         }
         // if next node is running, forward the command onward
         gd.userString = "p";
-        if(Pinger.ping(gd, nextNodePort)){
+        gd = Pinger.ping(gd, nextNodePort);
+        if(gd.pingSuccess){
           gd.userString = "m";
           PublishCommand.publish(gd, nextNodePort);
         }
@@ -200,6 +212,24 @@ class GossipWorker extends Thread{
           gd.userString = "m";
           PublishCommand.publish(gd, nextNodePort > Gossip.localData.serverPort ? nextNodePort - 2 : nextNodePort +2);
         }
+        break;
+
+
+      case "a":
+        gd.userString = "aPrime";
+        new ConsoleWorker(gd).start();
+        break;
+      case "a1":
+        // reply
+        // send back currently stored average
+        this.gd.average = Gossip.localData.average;
+        System.out.println("gd.average " + this.gd.average);
+        Pinger.respond(this.dp, this.gd);
+        break;
+      case "a2":
+        // ack received with newly calculated average. continue calculating if cycles > 0
+        System.out.println("New average: " + gd.average);
+        Gossip.localData.average = gd.average;
         break;
       case "y":
         DisplayLocals.displayCycles();
@@ -239,31 +269,42 @@ class ConsoleWorker extends Thread{
   public ConsoleWorker(GossipData gd){this.gd = gd;}
 
   public void run(){
+    int nextPort = Gossip.localData.upperNodePort;
     System.out.println("Console Worker entered");
     switch(gd.userString){
       case "t": 
         System.out.println("l - list local values\np - ping upper node and lower node\nm - retreive the current Max/Min\nv - randomize local bucket value\n");
         break;
       case "p":   
-        System.out.printf("Ping to node %d successful: %b\n", Gossip.localData.nodeID+1, Pinger.ping(gd, Gossip.localData.serverPort+1));
-        System.out.printf("Ping to node %d successful: %b\n", Gossip.localData.nodeID-1, Pinger.ping(gd, Gossip.localData.serverPort-1));
+        gd = Pinger.ping(gd, Gossip.localData.upperNodePort);
+        System.out.printf("Ping to node %d successful: %b\n", Gossip.localData.nodeID+1, gd.pingSuccess);
+        gd = Pinger.ping(gd, Gossip.localData.lowerNodePort);
+        System.out.printf("Ping to node %d successful: %b\n", Gossip.localData.nodeID-1, gd.pingSuccess );
         break;
       case "v":
       // randomize the local node and send off in either direction.
       // we don't care about responses. Either a node will receive the call, or it is not running. 
         RandomizeValue.randomize();
-        PublishCommand.publish(gd, Gossip.localData.serverPort+1);
-        PublishCommand.publish(gd, Gossip.localData.serverPort-1);
+        PublishCommand.publish(gd, Gossip.localData.upperNodePort);
+        PublishCommand.publish(gd, Gossip.localData.lowerNodePort);
         break;
       case "l":
+      // we don't care about responses. Either a node will receive the call, or it is not running.
         DisplayLocals.displayLocals();
-        PublishCommand.publish(gd, Gossip.localData.serverPort+1);
-        PublishCommand.publish(gd, Gossip.localData.serverPort-1);
+        PublishCommand.publish(gd, Gossip.localData.upperNodePort);
+        PublishCommand.publish(gd, Gossip.localData.lowerNodePort);
         break;
       case "lm":
+      // we don't care about responses. Either a node will receive the call, or it is not running.
         DisplayLocals.displayMaxMin();
-        PublishCommand.publish(gd, Gossip.localData.serverPort+1);
-        PublishCommand.publish(gd, Gossip.localData.serverPort-1);
+        PublishCommand.publish(gd, Gossip.localData.upperNodePort);
+        PublishCommand.publish(gd, Gossip.localData.lowerNodePort);
+        break;
+      case "la":
+      // we don't care about responses. Either a node will receive the call, or it is not running.
+        DisplayLocals.displayAverage();
+        PublishCommand.publish(gd, Gossip.localData.upperNodePort);
+        PublishCommand.publish(gd, Gossip.localData.lowerNodePort);
         break;
       case "m":
         MCycle.initM(gd);
@@ -273,27 +314,67 @@ class ConsoleWorker extends Thread{
         // Gossip worker will use cycleCount to know when to turn around and go back, or stop
         // send the command to upper node if it is running 
         gd.userString = "p";
-        if(Pinger.ping(gd, Gossip.localData.serverPort+1)){
+        gd = Pinger.ping(gd, Gossip.localData.upperNodePort);
+        if(gd.pingSuccess){
           gd.userString = "m";
           gd.cycleCount++;
-          PublishCommand.publish(gd, Gossip.localData.serverPort+1);
+          PublishCommand.publish(gd, Gossip.localData.upperNodePort);
         }
         // send the command to lower node if it is running
         gd.userString = "p";
-        if(Pinger.ping(gd, Gossip.localData.serverPort-1)){
+        gd = Pinger.ping(gd, Gossip.localData.lowerNodePort);
+        if(gd.pingSuccess){
           gd.userString = "m";
           gd.cycleCount++;
-          PublishCommand.publish(gd, Gossip.localData.serverPort-1);
+          PublishCommand.publish(gd, Gossip.localData.lowerNodePort);
         }
         // no neighbors are present, so print local data and call it a day
         if (gd.cycleCount == 0){
           System.out.printf("Max: %d\nMin: %d\n", Gossip.localData.highValue, Gossip.localData.lowValue);
         }
         break;
+
+
+
+
+      case "a": 
+      // initialize once      
+        AverageCycle.initAvg(gd);
+      // aPrime called from new node to calculate average
+    
+      case "aPrime":
+        // calcAvg will return false if the exchange was unsuccessful. turn around
+        // calcAvg will return true if the exchange is completed. Invariant being that the request/reply/ack is complete
+        boolean goInTheSameDirection = AverageCycle.calcAvg(gd, nextPort);
+        if(Gossip.localData.nodeID == gd.cycleStarterNode){
+          gd.cycleCount--;
+          System.out.println("cycles remaining: " + gd.cycleCount);
+        }
+         if (gd.cycleCount < 1){
+            //print results, gossip cycle complete
+            System.out.println("cycle complete");
+            gd.userString = "la";
+            new ConsoleWorker(gd).start();
+            break;
+        }
+        // next node is running
+        gd.userString = "a";
+        if(goInTheSameDirection){
+          //System.out.println("Exchange successful.");
+          System.out.println("New average: " + gd.average);
+          PublishCommand.publish(gd, nextPort);
+        }
+        else{
+          System.out.println("Turn around.");
+          PublishCommand.publish(gd, nextPort > Gossip.localData.serverPort ? nextPort - 2 : nextPort + 2);
+        }
+        break;
+
+
       case "y":
         DisplayLocals.displayCycles();
-        PublishCommand.publish(gd, Gossip.localData.serverPort+1);
-        PublishCommand.publish(gd, Gossip.localData.serverPort-1);
+        PublishCommand.publish(gd, Gossip.localData.upperNodePort);
+        PublishCommand.publish(gd, Gossip.localData.lowerNodePort);
       default:
         System.out.println("Input not recognized"); 
 
@@ -301,7 +382,122 @@ class ConsoleWorker extends Thread{
     System.out.print("\n>");
   }  
 }
+/***********************************************************************************************/
 
+class AverageCycle extends Thread{
+
+  public static boolean calcAvg(GossipData gd, int port){
+    gd.userString = "a1";
+    // neighbor node has responded successfully with their locally stored average
+    // request
+    gd = Pinger.ping(gd, port);
+    if (gd.pingSuccess){
+      try{
+      Thread.sleep(1000);
+      }catch(Exception e){}
+      System.out.println("local average: " + Gossip.localData.average + " gd.average: " + gd.average);
+      Gossip.localData.average = gd.average = (Gossip.localData.average + gd.average)/2;
+      gd.userString = "a2";
+      // acknowledge
+      Pinger.ping(gd, port);
+      return true;
+    }
+    // neighbor node not running, turn around
+    return false;
+  }
+
+  public static void initAvg(GossipData gd){
+    gd.cycleCount = Gossip.localData.N;
+    gd.cycleStarterNode = Gossip.localData.nodeID;
+    
+  }
+}
+/***********************************************************************************************/
+class Pinger extends Thread {
+  public static boolean pingSuccess = false;
+
+  public static GossipData ping(GossipData gd, int port){
+    if(port < 48100 || port > 48109){
+      return gd;
+    }
+    try{
+        DatagramSocket dg = new DatagramSocket();
+        InetAddress IPAddress = InetAddress.getByName("localhost");
+        // set the GossipData obj with the necassary info for a ping call. 
+        gd.nodeID = Gossip.localData.nodeID;
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        ObjectOutputStream oos = new ObjectOutputStream(outputStream);
+        oos.writeObject(gd);
+        byte[] data = outputStream.toByteArray();
+        DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, port);
+        dg.send(dp);
+        gd = listen(dg, gd);
+        //System.out.println("Ping success: " + pingSuccess);
+      }
+      catch(UnknownHostException he ){
+        he.printStackTrace();
+      }
+      catch(IOException io){
+        io.printStackTrace();
+      }
+      return gd;
+    }
+
+    // listen for response from the neighbor on the same socket as the outgoing ping
+    // Socket.setSoTimeout set to continue if no response from neighbor
+    // only if data is received will pingSuccess set to true. Else returns false. 
+    public static GossipData listen(DatagramSocket dg, GossipData gd){
+      
+      try{
+        byte[] data = new byte[2048];
+        DatagramPacket dp = new DatagramPacket(data, data.length);
+        // wait 
+        dg.setSoTimeout(500);
+        dg.receive(dp);
+        byte[] receivedData = dp.getData();
+        //System.out.println("Pinger listen has received info");
+        ByteArrayInputStream in = new ByteArrayInputStream(receivedData);
+        ObjectInputStream ois = new ObjectInputStream(in);
+        try{
+          
+          gd = (GossipData) ois.readObject();
+          gd.pingSuccess = true;
+          return gd;
+        }
+        catch (ClassNotFoundException cnf){
+          cnf.printStackTrace();
+        }
+      }
+      catch(SocketTimeoutException ste){
+       // System.out.println("Socket time out");
+      }
+      catch (IOException io){}
+      gd.pingSuccess = false;
+      return gd;
+    }
+
+    // ping receiever receives the ping and pongs back
+     public static void respond(DatagramPacket dp, GossipData gd){
+      //System.out.println("Pinger respond entered");
+      try{
+          DatagramSocket dg = new DatagramSocket();
+          InetAddress IPAddress = InetAddress.getByName("localhost");
+          ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+          ObjectOutputStream oos = new ObjectOutputStream(outputStream);
+          oos.writeObject(gd);
+          byte[] data = outputStream.toByteArray();
+          DatagramPacket responsePacket = new DatagramPacket(data, data.length, IPAddress, dp.getPort());
+          dg.send(responsePacket);
+          dg.close(); 
+        }
+        catch(UnknownHostException he ){
+          he.printStackTrace();
+        }
+        catch(IOException io){
+          io.printStackTrace();
+        }
+    }
+}
 /***********************************************************************************************/
 // simple publish class does not need to know if neighbor node is running
 // send off the command to the next node to receive, only if it is running
@@ -328,84 +524,7 @@ class PublishCommand{
       }
 }
 }
-/***********************************************************************************************/
-class Pinger extends Thread {
-  public static boolean pingSuccess = false;
 
-  public static boolean ping(GossipData gd, int port){
-    if(port < 48100 || port > 48109){
-      return false;
-    }
-    try{
-        DatagramSocket dg = new DatagramSocket();
-        InetAddress IPAddress = InetAddress.getByName("localhost");
-        // set the GossipData obj with the necassary info for a ping call. 
-        gd.nodeID = Gossip.localData.nodeID;
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        ObjectOutputStream oos = new ObjectOutputStream(outputStream);
-        oos.writeObject(gd);
-        byte[] data = outputStream.toByteArray();
-        DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, port);
-        dg.send(dp);
-        pingSuccess = listen(dg, gd);
-      }
-      catch(UnknownHostException he ){
-        he.printStackTrace();
-      }
-      catch(IOException io){
-        io.printStackTrace();
-      }
-      
-      return pingSuccess;
-    }
-
-    // listen for response from the neighbor on the same socket as the outgoing ping
-    // Socket.setSoTimeout set to continue if no response from neighbor
-    // only if data is received will pingSuccess set to true. Else returns false. 
-    public static boolean listen(DatagramSocket dg, GossipData gd){
-      try{
-        byte[] data = new byte[2048];
-        DatagramPacket dp = new DatagramPacket(data, data.length);
-        dg.setSoTimeout(500);
-        dg.receive(dp);
-        byte[] receivedData = dp.getData();
-        ByteArrayInputStream in = new ByteArrayInputStream(receivedData);
-        ObjectInputStream ois = new ObjectInputStream(in);
-        try{
-          gd = (GossipData) ois.readObject();
-          return true;
-        }
-        catch (ClassNotFoundException cnf){
-          cnf.printStackTrace();
-        }
-      }
-      catch(SocketTimeoutException ste){
-      }
-      catch (IOException io){}
-      return false;
-    }
-
-    // ping receiever receives the ping and pongs back
-     public static void receive(DatagramPacket dp, GossipData gd){
-      try{
-          DatagramSocket dg = new DatagramSocket();
-          InetAddress IPAddress = InetAddress.getByName("localhost");
-          ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-          ObjectOutputStream oos = new ObjectOutputStream(outputStream);
-          oos.writeObject(gd);
-          byte[] data = outputStream.toByteArray();
-          DatagramPacket responsePacket = new DatagramPacket(data, data.length, IPAddress, dp.getPort());
-          dg.send(responsePacket);
-          dg.close(); 
-        }
-        catch(UnknownHostException he ){
-          he.printStackTrace();
-        }
-        catch(IOException io){
-          io.printStackTrace();
-        }
-    }
-}
 /***********************************************************************************************/
 class MCycle{
 
@@ -465,7 +584,11 @@ class DisplayLocals {
   }
   public static void displayCycles(){
     Gossip.localData.cycles++;
-    System.out.printf("Number of cycles for node %d: %d", Gossip.localData.nodeID, Gossip.localData.cycles);
+    System.out.printf("Number of cycles for node %d: %d\n", Gossip.localData.nodeID, Gossip.localData.cycles);
+  }
+  public static void displayAverage(){
+    Gossip.localData.cycles++;
+    System.out.printf("Local value: %d, network average: %f\n", Gossip.localData.localDataValue, Gossip.localData.average);
   }
 }
 
