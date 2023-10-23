@@ -41,7 +41,6 @@ class GossipData implements Serializable{
   double average;
   double groupSize;
   String userString;
-  int cycleCount;
   int cycleStarterNode;
   boolean pingSuccess;
   int newNValue;
@@ -53,15 +52,15 @@ class LocalData {
   int upperNodePort;
   int lowerNodePort;
   int localDataValue;
-  double average;
   int maxValue;
   int maxValueNode;
   int minValue;
   int minValueNode;
+  double average;
   double groupSize;
   int cycles;
+  int currentCycleCount;
   int N;
-  HashMap<UUID, Integer> cycleTracker;
 }
 /**********************************************************************************************/
 // Gossip class called from the CLI with one argument
@@ -97,7 +96,6 @@ public class Gossip {
             UDPSocket.close();
             break;
           }
-          // respond to outside correspondence
           new GossipWorker(gd, dp).start();
         }
         catch (ClassNotFoundException cnf){
@@ -120,7 +118,8 @@ public class Gossip {
     localData.localDataValue = (int) (Math.random() * 100);
     localData.average = localData.minValue = localData.maxValue = localData.localDataValue;
     localData.cycles = 0;
-    localData.N = 10;
+    localData.N = 20;
+    localData.currentCycleCount = localData.N;
     localData.groupSize = 0;
     localData.maxValueNode = localData.minValueNode = localData.nodeID;
     localData.upperNodePort = localData.localPort+1;
@@ -143,10 +142,11 @@ class GossipWorker extends Thread{
     this.gd = gd; 
     this.dp = dp;
   }
-
+  
   public void run(){
-    System.out.println("Communication from the outside world! It's from node: " + gd.nodeID);
-    System.out.println("Command received: " + gd.userString + "\n");
+   
+    //System.out.println("Communication from the outside world! It's from node: " + gd.nodeID);
+    //System.out.println("Command received: " + gd.userString + "\n");
     // if sender is lower, next port is upper and vice versa
     int nextNodePort = gd.nodeID > Gossip.localData.nodeID ?  Gossip.localData.localPort-1 : Gossip.localData.localPort+1;
     switch(this.gd.userString){
@@ -166,12 +166,6 @@ class GossipWorker extends Thread{
         DisplayLocals.displayLocals();
         Publisher.publish(gd, nextNodePort);
         break;
-      // internal case for printing Max/Min
-      case "lm":
-      // perform local action and forward onward
-        DisplayLocals.displayMaxMin();
-        Publisher.publish(gd, nextNodePort);
-        break;
       // internal case for printing average
       case "la":
         DisplayLocals.displayAverage();
@@ -181,34 +175,36 @@ class GossipWorker extends Thread{
         DisplayLocals.displaySize(gd);
         Publisher.publish(gd, nextNodePort);
         break;
+
       case "m":
-        gd = MCycle.compute(gd);
-        Publisher.publish(gd, this.dp.getPort());
-        if(gd.cycleStarterNode == Gossip.localData.nodeID){
-          gd.cycleCount--;
-        } 
-        if (gd.cycleCount < 1){
-          gd.userString = "lm";
-          gd.cycleCount = 0;
-          new ConsoleWorker(gd).start();
-          break;
-        }
-        MCycle.cycle(gd, nextNodePort);
+        Publisher.publish(gd, nextNodePort);
+        MCycle.gossip(gd);
+        break;
+      case "calcM":
+        MCycle.calcM(gd);
         break;
       case "a":
+        Publisher.publish(gd, nextNodePort);
+        AverageCycle.gossip(gd);
+        break;
+      case "calcA":
+        gd.average = AverageCycle.calcAvg(gd.average);
+        Publisher.publish(gd, this.dp.getPort());
+        break;
+     /*  case "a":
       // calculate average when contacted by neighbor
         gd.average = AverageCycle.calcAvg(gd.average);
         // send back the results
         Publisher.publish(gd, this.dp.getPort());
         // check if this node is the initiator
         if(Gossip.localData.nodeID == gd.cycleStarterNode){
-          gd.cycleCount--;
-          System.out.println("cycles remaining: " + gd.cycleCount);
+          gd.currentCycleCount--;
+          System.out.println("cycles remaining: " + gd.currentCycleCount);
         }
-        if (gd.cycleCount < 1){
+        if (gd.currentCycleCount < 1){
            System.out.println("cycle complete");
            gd.userString = "la";
-           gd.cycleCount = 0;
+           gd.currentCycleCount = 0;
            new ConsoleWorker(gd).start();
            break;
         }
@@ -218,18 +214,18 @@ class GossipWorker extends Thread{
         gd = SizeCycle.compute(gd);
         Publisher.publish(gd, dp.getPort());
         if(Gossip.localData.nodeID == gd.cycleStarterNode){
-          gd.cycleCount--;
-          System.out.println("cycles remaining: " + gd.cycleCount);
+          gd.currentCycleCount--;
+          System.out.println("cycles remaining: " + gd.currentCycleCount);
         }
-        if (gd.cycleCount < 1){
+        if (gd.currentCycleCount < 1){
            System.out.println("cycle complete");
            gd.userString = "lz";
-           gd.cycleCount = 0;
+           gd.currentCycleCount = 0;
            new ConsoleWorker(gd).start();
            break;
         }
         SizeCycle.cycle(gd, nextNodePort);
-        break;
+        break; */
       case "y":
         DisplayLocals.displayCycles();
         Publisher.publish(gd, nextNodePort);
@@ -241,7 +237,9 @@ class GossipWorker extends Thread{
       default:
         System.out.println("Input not recognized"); 
     }
-    System.out.print("\n>");
+    
+    //System.out.print("\n>");
+    //Gossip.localData.working = false;
   }
 }
 /**************************************************************************************/
@@ -252,7 +250,7 @@ class ConsoleInputLooper implements Runnable {
       String clientCommand;
       System.out.println("Enter t too see a list of functions.\n");
       while(true){
-        System.out.print(">");
+        System.out.print("");
         clientCommand = input.nextLine();
         if(clientCommand.equals("quit")){
           System.out.println("Goodbye");
@@ -274,15 +272,11 @@ class ConsoleWorker extends Thread{
 
   public void run(){
     System.out.println("Console Worker entered");
-    
-    
     boolean isNumeric = testIsNumeric(gd);
-    
     if(isNumeric){
       Gossip.localData.N = gd.newNValue = Integer.parseInt(gd.userString);
       gd.userString = "N";
     }
-    
     switch(gd.userString){
       case "t": 
         System.out.println("l - list local values\np - ping upper node and lower node\nm - retreive the current Max/Min\nv - randomize local bucket value\n");
@@ -307,13 +301,6 @@ class ConsoleWorker extends Thread{
         Publisher.publish(gd, Gossip.localData.upperNodePort);
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
         break;
-      case "lm":
-      // display min/max values, then send in either direction
-      // we don't care about responses. Either a node will receive the call, or it is not running.
-        DisplayLocals.displayMaxMin();
-        Publisher.publish(gd, Gossip.localData.upperNodePort);
-        Publisher.publish(gd, Gossip.localData.lowerNodePort);
-        break;
       case "la":
       // display local average, then send in either direction
       // we don't care about responses. Either a node will receive the call, or it is not running.
@@ -327,32 +314,39 @@ class ConsoleWorker extends Thread{
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
         break;
       case "m":
-        MCycle.initM(gd);
-        MCycle.cycle(gd, Gossip.localData.upperNodePort);
+        Publisher.publish(gd, Gossip.localData.upperNodePort);
+        Publisher.publish(gd, Gossip.localData.lowerNodePort);
+        MCycle.gossip(gd);
         break;
       case "a": 
-        AverageCycle.initAvg(gd);
-        AverageCycle.cycle(gd, Gossip.localData.upperNodePort);
+        //AverageCycle.initAvg(gd);
+        //AverageCycle.cycle(gd, Gossip.localData.upperNodePort);
+        //AverageCycle.cycle(gd, Gossip.localData.lowerNodePort);
+        Publisher.publish(gd, Gossip.localData.upperNodePort);
+        Publisher.publish(gd, Gossip.localData.lowerNodePort);
+        AverageCycle.gossip(gd);
         break;
       case "z":
         SizeCycle.initSize(gd);
         SizeCycle.cycle(gd, Gossip.localData.upperNodePort);
         break;
       case "y":
-        DisplayLocals.displayCycles();
         Publisher.publish(gd, Gossip.localData.upperNodePort);
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
+        DisplayLocals.displayCycles();
+        break;
       case "N":
         Publisher.publish(gd, Gossip.localData.upperNodePort);
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
+        break;
       default:
         System.out.println("Input not recognized"); 
 
     }
-    System.out.print("\n>");
-  }  
+    
+  } 
+
   public boolean testIsNumeric(GossipData gd){
-  
     char[] userInput = gd.userString.toCharArray();
     if(userInput.length < 1){return false;}
     for(int i = 0; i < userInput.length; i++){
@@ -368,7 +362,6 @@ class ConsoleWorker extends Thread{
 class SizeCycle{
   public static GossipData initSize(GossipData gd){
     Gossip.localData.groupSize = gd.groupSize = 1;
-    gd.cycleCount = Gossip.localData.N;
     gd.cycleStarterNode = Gossip.localData.nodeID;
     return gd;
   }
@@ -398,72 +391,82 @@ class SizeCycle{
 /***********************************************************************************************/
 class MCycle{
 
-public static void initM(GossipData gd){
-    //reset values as high/low could've changed with randomizer
-    gd.maxValue = gd.minValue = Gossip.localData.localDataValue;
-    gd.maxValueNode = gd.minValueNode = Gossip.localData.nodeID;
-    gd.cycleStarterNode = Gossip.localData.nodeID;
-    gd.cycleCount = 2;
-  }
-
-  public static void cycle(GossipData gd, int nextNodePort){
-    gd = Pinger.send(gd, nextNodePort);
-        if(gd.pingSuccess){
-         return;
-        }
-      gd = Pinger.send(gd, nextNodePort > Gossip.localData.localPort ? nextNodePort - 2 : nextNodePort + 2);
-        if(gd.pingSuccess){
-         return;
-        }
-        System.out.println("There are no neighbor nodes.");
-  }
-
-  public static GossipData compute(GossipData gd){
-    if(Gossip.localData.maxValue > gd.maxValue){
+  public static void gossip (GossipData gd){
+    gd.userString = "calcM";
+    try{
+    Thread.sleep(100);
+    }catch (Exception e){}
+    do{
+      //System.out.println("Cycles remaining: " + Gossip.localData.currentCycleCount);
       gd.maxValue = Gossip.localData.maxValue;
       gd.maxValueNode = Gossip.localData.maxValueNode;
-    }
-    else {
+      gd.minValue = Gossip.localData.minValue;
+      gd.minValueNode = Gossip.localData.minValueNode;
+      Publisher.publish(gd, Gossip.localData.upperNodePort);
+      Publisher.publish(gd, Gossip.localData.lowerNodePort);
+      --Gossip.localData.currentCycleCount;
+      try{
+        Thread.sleep(25);
+      }catch (Exception e){}
+    }while(Gossip.localData.currentCycleCount > 1);
+    try{
+    Thread.sleep(100);
+    }catch (Exception e){}
+    DisplayLocals.displayMaxMin();
+  }
+
+  public static void calcM(GossipData gd){
+    if(gd.maxValue > Gossip.localData.maxValue ){
       Gossip.localData.maxValue = gd.maxValue;
       Gossip.localData.maxValueNode = gd.maxValueNode;
     }
-    if(Gossip.localData.minValue < gd.minValue){
-      gd.minValue = Gossip.localData.minValue;
-      gd.minValueNode = Gossip.localData.minValueNode;
-    }
-    else {
+    if(gd.minValue < Gossip.localData.minValue ){
       Gossip.localData.minValue = gd.minValue;
       Gossip.localData.minValueNode = gd.minValueNode;
     }
-    return gd;
   }
-
- 
 }
 /***********************************************************************************************/
 
 class AverageCycle extends Thread{
   
-  public static void initAvg(GossipData gd){
-    System.out.println("Initializer called.");
-    gd.average = Gossip.localData.average;
-    gd.cycleCount = Gossip.localData.N;
-    gd.cycleStarterNode = Gossip.localData.nodeID;
-  }
-
-  public static void cycle(GossipData gd, int nextNodePort){
-    gd = Pinger.send(gd, nextNodePort);
-    if(gd.pingSuccess){
-      Gossip.localData.average = gd.average;
+  public static void gossip(GossipData gd){
+    gd.userString = "p";
+    try{
+      Thread.sleep(250);
+    }catch (Exception e){} 
+    gd = Pinger.send(gd, Gossip.localData.upperNodePort);
+    boolean hasUpper = gd.pingSuccess;
+    gd = Pinger.send(gd, Gossip.localData.lowerNodePort);
+    boolean hasLower = gd.pingSuccess;
+    if(!hasLower && !hasUpper){
+      System.out.println("There are no neighbors present.");
       return;
     }
-    gd = Pinger.send(gd, nextNodePort > Gossip.localData.localPort ? nextNodePort - 2 : nextNodePort + 2);
-    if (gd.pingSuccess){   
-      Gossip.localData.average = gd.average;
-      return;
-    } 
-    System.out.println("No neighbors present. Cannot calculate network average.");
-    
+    gd.average = Gossip.localData.localDataValue;
+    gd.userString = "calcA";
+    try{
+      Thread.sleep(1500);
+    }catch (Exception e){}
+    do{
+      gd.average = Gossip.localData.average;
+      if(hasUpper){
+        gd = Pinger.send(gd, Gossip.localData.upperNodePort);
+        Gossip.localData.average = gd.average;
+      }
+      if(hasLower){
+        gd = Pinger.send(gd, Gossip.localData.lowerNodePort);
+        Gossip.localData.average = gd.average;
+      }
+      --Gossip.localData.currentCycleCount;
+      try{
+        Thread.sleep(500);
+      }catch (Exception e){}
+    }while(Gossip.localData.currentCycleCount > 1);
+    try{
+    Thread.sleep(250);
+    }catch (Exception e){}
+    DisplayLocals.displayAverage();
   }
 
   public static double calcAvg(double avg){
@@ -495,7 +498,7 @@ class Pinger extends Thread {
         DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, port);
         dg.send(dp);
         gd = listen(dg, gd);
-        System.out.println("Pinger success: " + gd.pingSuccess);
+        //System.out.println("Pinger success: " + gd.pingSuccess);
       }
       catch(UnknownHostException he ){
         he.printStackTrace();
@@ -514,7 +517,7 @@ class Pinger extends Thread {
         byte[] data = new byte[2048];
         DatagramPacket dp = new DatagramPacket(data, data.length);
         // wait 
-        dg.setSoTimeout(500);
+        dg.setSoTimeout(250);
         dg.receive(dp);
         byte[] receivedData = dp.getData();
         //System.out.println("Pinger listen has received info");
@@ -585,29 +588,37 @@ class RandomizeValue{
 class DisplayLocals {
   public static void displayLocals(){
     Gossip.localData.cycles++;
-    System.out.printf("Locally stored data for node %d\nPublic Port: %d\nInteger Value: %d\nCycles: %d\nN value: %d", Gossip.localData.nodeID, Gossip.localData.localPort, Gossip.localData.localDataValue, Gossip.localData.cycles, Gossip.localData.N);
+    System.out.printf("Locally stored data for node %d\nPublic Port: %d\nInteger Value: %d\nCycles: %d\nN value: %d\n", Gossip.localData.nodeID, Gossip.localData.localPort, Gossip.localData.localDataValue, Gossip.localData.cycles, Gossip.localData.N);
     System.out.println("Group size: " + Gossip.localData.groupSize);
+    System.out.println("\n");
   }
   public static void displayMaxMin(){
     Gossip.localData.cycles++;
+    Gossip.localData.currentCycleCount = Gossip.localData.N;
     System.out.println("Max value: " + Gossip.localData.maxValue + " at node: " + Gossip.localData.maxValueNode );
     System.out.println("Min value: " + Gossip.localData.minValue + " at node: " + Gossip.localData.minValueNode);
+    System.out.println("\n");
   }
   public static void displayCycles(){
     Gossip.localData.cycles++;
     System.out.printf("Number of cycles for node %d: %d\n", Gossip.localData.nodeID, Gossip.localData.cycles);
+    System.out.println("\n");
   }
   public static void displayAverage(){
-    Gossip.localData.cycles += Gossip.localData.N;
+    Gossip.localData.cycles++;
+    Gossip.localData.currentCycleCount = Gossip.localData.N;
     System.out.printf("Local value: %d, network average: %.2f\n", Gossip.localData.localDataValue, Gossip.localData.average);
+    Gossip.localData.average = Gossip.localData.localDataValue;
+    System.out.println("\n");
   }
   public static void displaySize(GossipData gd){
-    Gossip.localData.cycles += Gossip.localData.N;
+    Gossip.localData.cycles++;
     double testD = 1/gd.groupSize;
     int testI = (int) (1/gd.groupSize);
     double testDiv = testD/testI;
     System.out.printf("Group size: %d\n",  testDiv > 1 ? testI+1 : testI );
     Gossip.localData.groupSize = 0;
+    System.out.println("\n");
   }
 
 }
