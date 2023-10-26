@@ -6,7 +6,7 @@
 2. Date: 2023-10-25
  
 3. Java version:  "20.0.2" 2023-07-18
-   Java(TM) SE Runtime Environment (build 20.0.2+9-78)
+   - Java(TM) SE Runtime Environment (build 20.0.2+9-78)
 
  
 4. Precise command-line compilation examples / instructions:
@@ -14,31 +14,36 @@
     > javac *.java
     > javac *.java
     
- 
 5. Precise examples / instructions to run this program:
  
-    In separate shell windows (in any order):
+    - In separate shell windows (in any order):
     
     > java Gossip <option>
 
-    Option will be an interger 0-9 corresponding to a node in the network
-  
-
+    - Option will be an interger 0-9 corresponding to a node in the network
  
 6. Full list of files needed for running the program:
  
     a. Gossip.java
  
 7. Notes:
-    - Client and ClientAdmin are permitted to swith servers even of secondary server is not running,
-      however, if they try and take any action with this server they will receive a message 
-      indicating the server is not available.
-    - I chose to use implementation one from the provided Joke State document.
-    - Comments are placed ABOVE the line or section of which they describe.
-    - My code utilizes the resources provided with the assignment. Specifically, asynchronus threads, and mode changer
-      were rewritten with my own constructs or logic.
-    - Closing down a server with active clients and/or admin can blow up the system. Clients and Admins can come and go with no ill effects.
-    - I only one machine, therefore I have only tested this system with local IP addresses (i.e. java JokeClient localhost localhost and java JokeClient 10.0.0.177 10.0.0.177) 
+
+    - The system is not set up to handle starting multiple nodes with the same integer. Behavior is undefined.
+    - Calculations of average and size will be more precise as N increases in value.
+    - Default value for N is 20.
+    - N is the maximum number of messages sent between neighbors in 1 cycle. 
+    - Definition of a cycle: any input that prints on all nodes in the [sub-]network.
+      Thus, one input of "l", "y", "m", "a", "z", "v", and also N (which does not print on the consoles) are one cycle.
+    - From the assignment page: "We will test your system by running one cycle at a time" and also
+      "Once a Gossip Cycle ends, a new one can be triggered from the console of any network node"
+      My system is undefined beyond these statements. 
+    - Commands "l", "y", "v", "N (and integer)", and "k" are broadcasted to the network using the Publisher class.
+      In this sense, they are "send only" commands.
+    - "m" performs N trades with neighbors, at which point the min and max are (theoretically) saved locally in all nodes.
+    - It was my goal to perfom "a" and "z" in the same manner as "m", but I wasn't getting the correct results -
+      performance was very inconsistent. Instead, "a" and "z" move linearly through the network in N "rounds". Because of this 
+      nature, I did not implement a critical section. In this small network the values are calculated efficiently, 
+      but this would not remain true for a large "real world" network. 
 
 8. Thanks:
    -This code uses the provided starter code (Clark Elliott, GossipStarter.java copyright (c) 2023 with all rights reserved).
@@ -50,7 +55,7 @@ import java.net.*;
 import java.util.*;
 
 
-// Must be serializable to send 1 bit after another over the network.
+// Must be serializable to send 1 bit after another over the network
 class GossipData implements Serializable{ 
   int nodeID;
   int maxValue;
@@ -66,6 +71,7 @@ class GossipData implements Serializable{
   int newNValue;
 }
 /**********************************************************************************************/
+// Local data object
 class LocalData {
   int nodeID;
   int localPort;
@@ -86,7 +92,7 @@ class LocalData {
   boolean hasLower;
   
 }
-/**********************************************************************************************/
+/***********************************************************************************************************/
 // Gossip class called from the CLI with one argument
 // birth of the individual gossip node.
 public class Gossip {
@@ -120,7 +126,7 @@ public class Gossip {
             UDPSocket.close();
             break;
           }
-          new GossipWorker(gd, dp, UDPSocket).start();
+          new GossipWorker(gd, dp).start();
           
         }
         catch (ClassNotFoundException cnf){
@@ -135,6 +141,8 @@ public class Gossip {
       io.printStackTrace();
     }
   }
+
+  // set the opening values for the local data object
   public static void initGossip(String[] args){
     if(args.length > 0){
       localData.localPort = 48100 + Integer.parseInt(args[0]);
@@ -161,6 +169,7 @@ public class Gossip {
     t.start();
   }
 
+  // at the onset of a cycle, see where the subnet stops
   public static void testNeighbors(GossipData gd){
     gd.userString = "p";
     gd = Pinger.send(gd, Gossip.localData.upperNodePort);
@@ -169,17 +178,15 @@ public class Gossip {
     localData.hasLower = gd.pingSuccess;
   }
 }
-/**********************************************************************************/
+/**************************************************************************************************************/
 // process the communication from the outside world
 class GossipWorker extends Thread{
   GossipData gd;
   // the datapacket sent from the outside world
   DatagramPacket dp;
-  DatagramSocket dg;
-  public GossipWorker (GossipData gd, DatagramPacket dp, DatagramSocket dg){
+  public GossipWorker (GossipData gd, DatagramPacket dp){
     this.gd = gd; 
     this.dp = dp;
-    this.dg = dg;
   }
   
   public void run(){
@@ -226,18 +233,15 @@ class GossipWorker extends Thread{
         Publisher.publish(gd, nextNodePort);
         break;
       case "a":
-        System.out.println("Node receiving trade: " + Gossip.localData.nodeID);
-        // calculate average when contacted by neighbor
+         // calculate average when contacted by neighbor
         gd.average = AverageCycle.calcAvg(gd.average);
         Publisher.publish(gd, this.dp.getPort());
          
         // check if this node is the initiator
         if(Gossip.localData.nodeID == gd.cycleStarterNode){
           gd.currentRoundCount--;
-          //System.out.println("cycles remaining: " + gd.currentRoundCount);
-        }
+            }
         if (gd.currentRoundCount < 1){
-           //System.out.println("cycle complete");
            gd.userString = "la";
            gd.currentRoundCount = 0;
            new ConsoleWorker(gd).start();
@@ -246,45 +250,59 @@ class GossipWorker extends Thread{
         // determine which node to trade with next
         if(nextNodePort == Gossip.localData.upperNodePort){ 
           if( Gossip.localData.hasUpper){
-            //System.out.printf("Sending from node %d to %d ", Gossip.localData.nodeID, nextNodePort);
             AverageCycle.trade(gd, nextNodePort);
          }
           else {
-            //System.out.printf("Sending from node %d to %d\n", Gossip.localData.nodeID, nextNodePort-2);
             AverageCycle.trade(gd, nextNodePort - 2);
           }
         }
          else{
           if(Gossip.localData.hasLower){
-            //System.out.printf("Sending from node %d to %d ", Gossip.localData.nodeID, nextNodePort);
             AverageCycle.trade(gd, nextNodePort);
           }
           else{
-            //System.out.printf("Sending from node %d to %d\n", Gossip.localData.nodeID, nextNodePort+2);
             AverageCycle.trade(gd, nextNodePort + 2);
           }
-         
         }
         break;
-
+      case "zTest":
+        Gossip.testNeighbors(gd);
+        gd.userString = "zTest";
+        Publisher.publish(gd, nextNodePort);
+        break;
       case "z":
-        gd = SizeCycle.compute(gd);
-        Publisher.publish(gd, dp.getPort());
+        gd = SizeCycle.calcSize(gd);
+        Publisher.publish(gd, this.dp.getPort());
+         
+        // check if this node is the initiator
         if(Gossip.localData.nodeID == gd.cycleStarterNode){
           gd.currentRoundCount--;
           //System.out.println("cycles remaining: " + gd.currentRoundCount);
         }
         if (gd.currentRoundCount < 1){
-           System.out.println("cycle complete");
            gd.userString = "lz";
            gd.currentRoundCount = 0;
            new ConsoleWorker(gd).start();
            break;
         }
-        SizeCycle.gossip(gd, nextNodePort);
+        // determine which node to trade with next
+        if(nextNodePort == Gossip.localData.upperNodePort){ 
+          if( Gossip.localData.hasUpper){
+            SizeCycle.trade(gd, nextNodePort);
+         }
+          else {
+            SizeCycle.trade(gd, nextNodePort - 2);
+          }
+        }
+         else{
+          if(Gossip.localData.hasLower){
+            SizeCycle.trade(gd, nextNodePort);
+          }
+          else{
+            SizeCycle.trade(gd, nextNodePort + 2);
+          }
+        }
         break;
-
-
       case "y":
         DisplayLocals.displayCycles();
         Publisher.publish(gd, nextNodePort);
@@ -302,16 +320,16 @@ class GossipWorker extends Thread{
       default:
         System.out.println("Input not recognized"); 
     }
-    //System.out.println("");
+   
   }
 }
-/**************************************************************************************/
+/************************************************************************************************************/
 class ConsoleInputLooper implements Runnable {
   Scanner input = new Scanner(System.in);
   
   public void run(){
       String clientCommand;
-      System.out.println("Enter t too see a list of functions.\n");
+      System.out.println("Enter t to see a list of functions.\n");
       while(true){
         System.out.print("");
         clientCommand = input.nextLine();
@@ -326,7 +344,7 @@ class ConsoleInputLooper implements Runnable {
       }
   }
 }
-/***********************************************************************************************/
+/*************************************************************************************************************/
 // process the input from the user console
 // The Gossip Data object will have the user command and will be passed along to subsequent processes
 class ConsoleWorker extends Thread{
@@ -334,11 +352,13 @@ class ConsoleWorker extends Thread{
   public ConsoleWorker(GossipData gd){this.gd = gd;}
 
   public void run(){
+    // handle numeric inputs indicated the setting of N value
     boolean isNumeric = testIsNumeric(gd);
     if(isNumeric){
       Gossip.localData.N = gd.newNValue = Integer.parseInt(gd.userString);
       gd.userString = "N";
     }
+    
     switch(gd.userString){
       case "t": 
         System.out.println("l - list local values\np - ping upper node and lower node\nm - retreive the current Max/Min\nv - randomize local bucket value\na - calculate network average\nz - calculate network size\ny - list completed cycles for the each node\nN - set message count for a cycle\nd - delete the current node\nk - shut down the network\n\n");
@@ -350,15 +370,9 @@ class ConsoleWorker extends Thread{
         System.out.printf("Ping to node %d successful: %b\n\n", Gossip.localData.nodeID-1, gd.pingSuccess );
         break;
       case "v":
-      // randomize the local node and send off in either direction to be performed locally
-      // we don't care about responses. Either a node will receive the call, or it is not running. 
         RandomizeValue.randomize();
-        //Publisher.publish(gd, Gossip.localData.upperNodePort);
-        //Publisher.publish(gd, Gossip.localData.lowerNodePort);
         break;
       case "l":
-      // display local values, then send in either direction
-      // we don't care about responses. Either a node will receive the call, or it is not running.
         DisplayLocals.displayLocals();
         break;
       case "la":
@@ -369,6 +383,7 @@ class ConsoleWorker extends Thread{
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
         break;
       case "lz":
+      // we don't care about responses. Either a node will receive the call, or it is not running.
         DisplayLocals.displaySize(gd);
         Publisher.publish(gd, Gossip.localData.upperNodePort);
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
@@ -379,14 +394,13 @@ class ConsoleWorker extends Thread{
         MCycle.gossip(gd);
         break;
       case "a": 
-
         AverageCycle.initAvg(gd);
         Gossip.testNeighbors(gd);
         if(!Gossip.localData.hasLower && !Gossip.localData.hasUpper){
           DisplayLocals.displayAverage();
           break;
         }
-        gd.userString = "aTest";
+        gd.userString = "zTest";
         Publisher.publish(gd, Gossip.localData.upperNodePort);
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
         try{
@@ -402,7 +416,24 @@ class ConsoleWorker extends Thread{
         break;
       case "z":
         SizeCycle.initSize(gd);
-        SizeCycle.gossip(gd, Gossip.localData.upperNodePort);
+        Gossip.testNeighbors(gd);
+        if(!Gossip.localData.hasLower && !Gossip.localData.hasUpper){
+          DisplayLocals.displaySize(gd);
+          break;
+        }
+        gd.userString = "aTest";
+        Publisher.publish(gd, Gossip.localData.upperNodePort);
+        Publisher.publish(gd, Gossip.localData.lowerNodePort);
+        try{
+          Thread.sleep(1000);
+        }catch(Exception e){}
+        gd.userString = "z";
+        if (Gossip.localData.hasUpper){
+          SizeCycle.trade(gd, Gossip.localData.upperNodePort);
+        }
+        else {
+          SizeCycle.trade(gd, Gossip.localData.lowerNodePort);
+        }
         break;
       case "y":
         DisplayLocals.displayCycles();
@@ -421,16 +452,17 @@ class ConsoleWorker extends Thread{
         System.exit(0);
         break;
       default:
-        System.out.println("Input not recognized"); 
-
+        System.out.println("Input not recognized");
     }
+    // display local values, then send in either direction
+    // we don't care about responses. Either a node will receive the call, or it is not running.
     if (gd.userString.equals("v") || gd.userString.equals("l")  || gd.userString.equals("y") || gd.userString.equals("N")){
         Publisher.publish(gd, Gossip.localData.upperNodePort);
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
     }
-    
   } 
 
+  // see if the user input are digits 
   public boolean testIsNumeric(GossipData gd){
     char[] userInput = gd.userString.toCharArray();
     if(userInput.length < 1){return false;}
@@ -443,38 +475,26 @@ class ConsoleWorker extends Thread{
   }
 }
 /***********************************************************************************************/
-
+// Basic self-explanatory functions here
+// Timing and directional logic is within the GossipWorker case for 
 class AverageCycle extends Thread{
   
-
   public static void initAvg(GossipData gd){
-    //System.out.println("Initializer called.");
     gd.average = Gossip.localData.average;
     gd.currentRoundCount = Gossip.localData.N;
     gd.cycleStarterNode = Gossip.localData.nodeID;
-    
   }
 
   public static void trade(GossipData gd, int nextNodePort){
-    //System.out.printf("Node %d has received back trade value\n", Gossip.localData.nodeID);
       gd = Pinger.send(gd, nextNodePort);
       Gossip.localData.average = gd.average;
-      //System.out.printf("new value %f stored at node %d\n", Gossip.localData.average, Gossip.localData.nodeID);
-   
       return;  
   }
 
   public static double calcAvg(double avg){
-      //System.out.println("local average: " + Gossip.localData.average + " gd.average: " + avg);
-      
       Gossip.localData.average = avg = (Gossip.localData.average + avg)/2;
-      //System.out.printf("new value %f stored at node %d\n", Gossip.localData.average, Gossip.localData.nodeID);
-    return avg;
+      return avg;
   }
-  
-  
-
-  
 }
 /***********************************************************************************************/
 
@@ -486,21 +506,13 @@ class SizeCycle{
     return gd;
   }
 
-  public static void gossip(GossipData gd, int nextNodePort){
+  public static void trade(GossipData gd, int nextNodePort){
     gd = Pinger.send(gd, nextNodePort);
-      if(gd.pingSuccess){
-        Gossip.localData.groupSize = gd.groupSize;
-       return;
-      }
-    gd = Pinger.send(gd, nextNodePort > Gossip.localData.localPort ? nextNodePort - 2 : nextNodePort + 2);
-      if(gd.pingSuccess){
-        Gossip.localData.groupSize = gd.groupSize;
-       return;
-      }
-    System.out.println("There are no neighbor nodes. Size: 1");
+    Gossip.localData.groupSize = gd.groupSize;
+    return;
   }
 
-  public static GossipData compute(GossipData gd){
+  public static GossipData calcSize(GossipData gd){
     if(Gossip.localData.groupSize == gd.groupSize){return gd;}
     gd.groupSize = Gossip.localData.groupSize = (Gossip.localData.groupSize + gd.groupSize)/2;
     return gd;
@@ -509,6 +521,7 @@ class SizeCycle{
 
 
 /***********************************************************************************************/
+// timing is used to allow messages enough time to travel between nodes
 class MCycle{
 
   public static void gossip (GossipData gd){
@@ -530,7 +543,7 @@ class MCycle{
       }catch (Exception e){}
     }while(Gossip.localData.currentRoundCount > 1);
     try{
-    Thread.sleep(100);
+        Thread.sleep(100);
     }catch (Exception e){}
     DisplayLocals.displayMaxMin();
   }
@@ -548,6 +561,8 @@ class MCycle{
 }
 
 /***********************************************************************************************/
+// Send and listen class. uses setSoTimeout() to move forward if no response is received. Returns false if timeout is detected
+// This class is also used to trade values in calculating average and size. 
 class Pinger extends Thread {
   
   public static GossipData send(GossipData gd, int port){
@@ -566,8 +581,7 @@ class Pinger extends Thread {
         DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, port);
         dg.send(dp);
         gd = listen(dg, gd);
-        //System.out.println("Pinger success: " + gd.pingSuccess);
-      }
+         }
       catch(UnknownHostException he ){
         he.printStackTrace();
       }
@@ -578,7 +592,7 @@ class Pinger extends Thread {
     }
 
     // listen for response from the neighbor on the same socket as the outgoing ping
-    // Socket.setSoTimeout set to continue if no response from neighbor
+    // Socket.setSoTimeout set to continue if no response from neighbor after a given period of time
     // only if data is received will pingSuccess set to true. Else returns false. 
     public static GossipData listen(DatagramSocket dg, GossipData gd){
       try{
@@ -635,7 +649,6 @@ class Publisher{
   }
 }
 
-
 /***********************************************************************************************/
 // randomizer will reset stored data (max/min, etc.) as they are no longer accurate. 
 class RandomizeValue{
@@ -644,14 +657,14 @@ class RandomizeValue{
     Gossip.localData.cycles++;
     System.out.println("Current local value: " + Gossip.localData.localDataValue );
     Gossip.localData.localDataValue = (int) (Math.random() * 100);
-    System.out.println("New local value: " + Gossip.localData.localDataValue );
+    System.out.println("New local value: " + Gossip.localData.localDataValue + "\n");
     Gossip.localData.maxValue = Gossip.localData.minValue  = Gossip.localData.localDataValue;
     Gossip.localData.maxValueNode = Gossip.localData.minValueNode = Gossip.localData.nodeID;
     Gossip.localData.average = (double) Gossip.localData.localDataValue; 
   }
 }
 /***********************************************************************************************/
-// "l" and "m" will call these functions once locally, with respect to the input
+// Display functions will be used to reset flags and round values as these are the last stop in cycles
 // use this opportunity to increase the LOCAL cycle count
 class DisplayLocals {
   public static void displayLocals(){
@@ -679,34 +692,253 @@ class DisplayLocals {
     Gossip.localData.firstVisit = true;
     Gossip.localData.hasUpper = false;
     Gossip.localData.hasLower = false;
-    
     System.out.println("\n");
   }
   public static void displaySize(GossipData gd){
+    int temp = (int) (gd.groupSize * 1000);
+    gd.groupSize = (double)temp/1000;
+    System.out.println("Group size: " + (int) (1/gd.groupSize));
     Gossip.localData.cycles++;
-    double testD = 1/gd.groupSize;
-    int testI = (int) (1/gd.groupSize);
-    double testDiv = testD/testI;
-    System.out.printf("Group size: %d\n",  testDiv > 1 ? testI+1 : testI );
     Gossip.localData.groupSize = 0;
+    Gossip.localData.firstVisit = true;
+    Gossip.localData.hasUpper = false;
+    Gossip.localData.hasLower = false;
     System.out.println("\n");
   }
-
 }
 
 /*********************************************************************************/
-/* Discussion Posts:  */
+/* Discussion Posts: 
 
-/*        OUTBOUND UDP UTILITY CODE
-          DatagramSocket dg = new DatagramSocket();
-          InetAddress IPAddress = InetAddress.getByName("localhost");
-          GossipData gd = new GossipData();
-          gd.userString = clientCommand;
-          gd.isFromConsole = true;
-          ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-          ObjectOutputStream oos = new ObjectOutputStream(outputStream);
-          oos.writeObject(gd);
-          byte[] data = outputStream.toByteArray();
-          DatagramPacket dp = new DatagramPacket(data, data.length, IPAddress, Gossip.localPort);
-          dg.send(dp);
-          dg.close(); */
+ * My discussion post regarding UDP connection:
+ 
+    Dealing with UDP transport places a lot of responsibility on the application developer to organize communication between processes. 
+    Here are some resources I've found particularly useful for navigating these issues as it relates to the Gossip program:
+
+    From Computer Networking: A Top-Down Approach (Kurose/Ross):
+
+    Chapter 2.7.1 Socket Programming with UDP
+    Chapter 3.3 Connectionless Transport: UDP
+    Chapter 3.4 Principles of Reliable Data Transfer
+    Chapter 3.8 Evolution of Transport-Layer Functionality (which introduces QUIC protocols)
+    From Distributed Systems (van Steen/Tanenbaum):
+
+    Chapter 4.3 Message-Oriented Communication
+    In particular, Note 4.9 - the request-reply pattern
+    And, Note 4.10 - the publisher-subscriber pattern
+    Additionally, I'm taking inspiration from the QUIC (Quick UDP Internet Connection) protocols, using the following image - the right-hand side - 
+    from Wikipedia as a template for a "trade" contract to implement when calculating the average and/or size of the [sub-]network. 
+    
+    [Image used here]
+
+    Whereas "QUIC combines the handshakes needed to establish connection state with those needed for authentication and encryption" (Kurose/Ross), 
+    my idea is to combine establishing connection with performing computations. 
+
+    Lastly, if you're still reading, Java's DatagramSocket class includes some very useful methods. I used one specific method in the implementation of Ping. 
+    Taking inspiration from TCP's timeout/retransmit mechanism, the setSoTimeout method is one of many ways to establish a timeout mechanism to detect if a neighbor node is up and running.   
+
+    As always, all feedback is welcomed. Thanks!
+
+  * A response to a fellow student:
+
+    Imagine that you and a few friends download the same application. You will all be running the same program on your individual machines (with their relative IP/port numbers). 
+    Each instance of the program will be listening for console input from the user, and simultaneously be responding to incoming requests from peers. 
+    This is a peer-to-peer system like those we've studied this term. So yes, "each gossip instance acts as its own client and server", and yes, "each node [will] have its own 
+    implementation of console looper".  
+
+    The assignment page includes a suggestion for a full development process. I recommend that section as a tip for getting started. 
+
+    Keep the questions coming and good luck!
+/*********************************************************************************
+
+* Sample Output:
+
+    Node 6 listening at port 48106
+    Enter t to see a list of functions.
+
+    Locally stored data for node 6
+    Public Port: 48106
+    Integer Value: 81
+    Cycles: 1
+    N value: 20
+
+
+    Locally stored data for node 6
+    Public Port: 48106
+    Integer Value: 81
+    Cycles: 3
+    N value: 17
+
+
+    Local value: 81, network average: 29.76
+
+
+    v
+    Current local value: 81
+    New local value: 51
+    a
+    Local value: 51, network average: 41.75
+
+
+    z
+    new gd.groupSize: 0.25
+    Group size: 4
+
+
+    y
+    Number of cycles for node 6: 8
+
+
+    Max value: 79 at node: 4
+    Min value: 7 at node: 3
+
+
+    d
+    Goodbye!
+
+/*********************************************************************************
+
+
+    Node 5 listening at port 48105
+    Enter t to see a list of functions.
+
+    Locally stored data for node 5
+    Public Port: 48105
+    Integer Value: 2
+    Cycles: 1
+    N value: 20
+
+
+    17
+    l
+    Locally stored data for node 5
+    Public Port: 48105
+    Integer Value: 2
+    Cycles: 3
+    N value: 17
+
+
+    a
+    Local value: 2, network average: 29.76
+
+
+    Current local value: 2
+    New local value: 30
+    Local value: 30, network average: 41.75
+
+
+    new gd.groupSize: 0.25
+    Group size: 4
+
+
+    Number of cycles for node 5: 8
+
+
+    t
+    l - list local values
+    p - ping upper node and lower node
+    m - retreive the current Max/Min
+    v - randomize local bucket value
+    a - calculate network average
+    z - calculate network size
+    y - list completed cycles for the each node
+    N - set message count for a cycle
+    d - delete the current node
+    k - shut down the network
+
+
+    m
+    Max value: 79 at node: 4
+    Min value: 7 at node: 3
+
+
+    k
+    Goodbye!
+
+/*********************************************************************************
+
+    Node 4 listening at port 48104
+    Enter t to see a list of functions.
+
+    l
+    Locally stored data for node 4
+    Public Port: 48104
+    Integer Value: 20
+    Cycles: 1
+    N value: 20
+
+
+    Locally stored data for node 4
+    Public Port: 48104
+    Integer Value: 20
+    Cycles: 3
+    N value: 17
+
+
+    Local value: 20, network average: 29.75
+
+
+    Current local value: 20
+    New local value: 79
+    Local value: 79, network average: 41.75
+
+
+    new gd.groupSize: 0.25
+    Group size: 4
+
+
+    Number of cycles for node 4: 8
+
+
+    Max value: 79 at node: 4
+    Min value: 7 at node: 3
+
+
+    Goodbye!
+
+/*********************************************************************************
+
+
+    Node 3 listening at port 48103
+    Enter t to see a list of functions.
+
+    p
+    Ping to node 4 successful: true
+    Ping to node 2 successful: false
+
+    Locally stored data for node 3
+    Public Port: 48103
+    Integer Value: 16
+    Cycles: 1
+    N value: 20
+
+
+    Locally stored data for node 3
+    Public Port: 48103
+    Integer Value: 16
+    Cycles: 3
+    N value: 17
+
+
+    Local value: 16, network average: 29.74
+
+
+    Current local value: 16
+    New local value: 7
+    Local value: 7, network average: 41.75
+
+
+    new gd.groupSize: 0.25
+    Group size: 4
+
+
+    Number of cycles for node 3: 8
+
+
+    Max value: 79 at node: 4
+    Min value: 7 at node: 3
+
+
+    Goodbye!
+ */
+
