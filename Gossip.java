@@ -297,7 +297,7 @@ class ConsoleWorker extends Thread{
     
     switch(gd.userString){
       case "t": 
-        System.out.println("l - list local values\np - ping upper node and lower node\nm - retreive the current Max/Min\nv - randomize local bucket value\na - calculate network average\nz - calculate network size\ny - list completed cycles for the each node\nN - set message count for a cycle\nd - delete the current node\nk - shut down the network\n\n");
+        System.out.println("l - list local values\np - ping upper node and lower node\nm - retreive the current Max/Min\nv - randomize local bucket value\naTwo - calculate network average\nzTwo - calculate network size\ny - list completed cycles for the each node\nN - set message count for a cycle\nd - delete the current node\nk - shut down the network\n\n");
         break;
       case "p":   
         gd = Pinger.send(gd, Gossip.localData.upperNodePort);
