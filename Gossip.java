@@ -213,29 +213,29 @@ class GossipWorker extends Thread{
       case "calcM":
         MCycle.calcM(gd);
         break;
-      case "a":
+      case "aTwo":
         Publisher.publish(gd, nextNodePort);
         if (gd.isOdd && Gossip.localData.nodeID%2 == 1 || !gd.isOdd && Gossip.localData.nodeID%2 == 0){
-          AverageCycle.gossip(gd);
+          AverageCycle2.gossip(gd);
         }
         break;
-      case "calcA":
+      case "calcATwo":
         //System.out.println("calc value received: " + gd.average);
-        gd.average = AverageCycle.calcAvg(gd.average);
+        gd.average = AverageCycle2.calcAvg(gd.average);
         //System.out.println("calc returning value: " + Gossip.localData.average);
         Publisher.publish(gd, this.dp.getPort());
         break;
-      case "z":
+      case "zTwo":
         Gossip.localData.groupSize = 0;
         Gossip.localData.currentRoundCount = 0;
         Publisher.publish(gd, nextNodePort);
         if (gd.isOdd && Gossip.localData.nodeID%2 == 1 || !gd.isOdd && Gossip.localData.nodeID%2 == 0){
-          SizeCycle.gossip(gd);
+          SizeCycle2.gossip(gd);
         }
         break;
-      case "calcZ":
+      case "calcZTwo":
         //System.out.println("calc value received: " + gd.groupSize);
-        gd = SizeCycle.calcSize(gd);
+        gd = SizeCycle2.calcSize(gd);
         //System.out.println("calc returning value: " + Gossip.localData.groupSize);
         Publisher.publish(gd, this.dp.getPort());
         break;
@@ -329,21 +329,21 @@ class ConsoleWorker extends Thread{
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
         MCycle.gossip(gd);
         break;
-      case "a":
+      case "aTwo":
         System.out.println("Please wait while we process your request. This may take a few seconds.\n");
         if (Gossip.localData.nodeID%2 == 1){
           gd.isOdd = true;
         }
         Publisher.publish(gd, Gossip.localData.upperNodePort);
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
-        AverageCycle.gossip(gd);
+        AverageCycle2.gossip(gd);
         try{
           Thread.sleep(1000);
         }catch(Exception e) {}
         gd.userString = "la";
         new ConsoleWorker(gd).start();
         break;
-      case "z":
+      case "zTwo":
         System.out.println("Please wait while we process your request. This may take a few seconds.\n");
         gd.currentRoundCount = Gossip.localData.N;
         if (Gossip.localData.nodeID%2 == 1){
@@ -352,7 +352,7 @@ class ConsoleWorker extends Thread{
         Publisher.publish(gd, Gossip.localData.upperNodePort);
         Publisher.publish(gd, Gossip.localData.lowerNodePort);
         Gossip.localData.groupSize = 1;
-        SizeCycle.gossip(gd);
+        SizeCycle2.gossip(gd);
         try{
           Thread.sleep(1000);
         }catch(Exception e) {}
@@ -401,7 +401,7 @@ class ConsoleWorker extends Thread{
 /***********************************************************************************************/
 // Basic self-explanatory functions here
 // Timing and directional logic is within the GossipWorker case for 
-class AverageCycle extends Thread{
+class AverageCycle2 extends Thread{
   
   public static void gossip (GossipData gd){
     try{
@@ -434,7 +434,7 @@ class AverageCycle extends Thread{
   public static synchronized void trade(GossipData gd, int nextNodePort){
 
       //System.out.println("trade value sent " + Gossip.localData.average);
-      gd.userString = "calcA";
+      gd.userString = "calcATwo";
       gd.average = Gossip.localData.average;
       DatagramSocket listener = Publisher.publish(gd, nextNodePort);
       gd = Publisher.listen(listener, gd);
@@ -450,7 +450,7 @@ class AverageCycle extends Thread{
 }
 /***********************************************************************************************/
 
-class SizeCycle{
+class SizeCycle2{
 
   public static void gossip (GossipData gd){
     
@@ -481,7 +481,7 @@ class SizeCycle{
 
   public static synchronized void trade(GossipData gd, int nextNodePort){
       //System.out.println("trade value sent " + Gossip.localData.groupSize);
-      gd.userString = "calcZ";
+      gd.userString = "calcZTwo";
       gd.groupSize = Gossip.localData.groupSize;
       DatagramSocket listener = Publisher.publish(gd, nextNodePort);
       gd = Publisher.listen(listener, gd);
